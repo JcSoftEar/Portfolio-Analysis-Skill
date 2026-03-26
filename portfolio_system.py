@@ -17,6 +17,17 @@ import time
 from datetime import datetime
 import webbrowser
 
+# 模拟浏览器的headers
+REQUEST_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Cache-Control': 'max-age=0'
+}
+
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)
 
@@ -85,7 +96,7 @@ class PortfolioManager:
             
             # 尝试新浪财经API
             url = f'https://hq.sinajs.cn/list={market}{symbol}'
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, headers=REQUEST_HEADERS, timeout=10)
             
             if response.status_code == 200:
                 content = response.content.decode('gbk')
@@ -103,7 +114,7 @@ class PortfolioManager:
             # 如果新浪失败，尝试腾讯API
             code = f'{market}{symbol}'
             url = f'https://qt.gtimg.cn/q={code}'
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, headers=REQUEST_HEADERS, timeout=10)
             # print('response', response.text)
             if response.status_code == 200:
                 text = response.text
@@ -123,6 +134,256 @@ class PortfolioManager:
         except Exception as e:
             print(f"获取价格失败 {symbol}: {e}")
             return None
+    
+    def get_stock_detail(self, symbol):
+        """获取股票详细信息，包括涨跌和分时图数据"""
+        try:
+            # 判断市场
+            if symbol.startswith('6'):
+                market = 'sh'
+            elif symbol.startswith('0') or symbol.startswith('3'):
+                market = 'sz'
+            elif symbol.startswith('688'):
+                market = 'sh'
+            elif symbol.startswith('301'):
+                market = 'sz'
+            elif symbol.startswith('512'):
+                market = 'sh'
+            elif symbol.startswith('000'):
+                market = 'sz'
+            elif symbol.startswith('1'):
+                market = 'sz'
+            else:
+                market = 'sh'
+            
+            # 尝试新浪财经API获取详细数据
+            url = f'https://hq.sinajs.cn/list={market}{symbol}'
+            response = requests.get(url, headers=REQUEST_HEADERS, timeout=10)
+            
+            detail_data = None
+            
+            if response.status_code == 200:
+                content = response.content.decode('gbk')
+                if '\"' in content:
+                    data_str = content.split('\"')[1]
+                    values = data_str.split(',')
+                    
+                    if len(values) >= 32:
+                        detail_data = {
+                            'symbol': symbol,
+                            'name': values[0],
+                            'open': float(values[1]) if values[1] else 0,
+                            'pre_close': float(values[2]) if values[2] else 0,
+                            'current': float(values[3]) if values[3] else 0,
+                            'high': float(values[4]) if values[4] else 0,
+                            'low': float(values[5]) if values[5] else 0,
+                            'source': '新浪财经'
+                        }
+            
+            # 如果新浪失败，尝试腾讯API
+            if not detail_data:
+                code = f'{market}{symbol}'
+                url = f'https://qt.gtimg.cn/q={code}'
+                response = requests.get(url, headers=REQUEST_HEADERS, timeout=10)
+                if response.status_code == 200:
+                    text = response.text
+                    if '=' in text:
+                        parts = text.split('=')
+                        if len(parts) > 1:
+                            values = parts[1].strip('"').split('~')
+                            if len(values) >= 40:
+                                detail_data = {
+                                    'symbol': symbol,
+                                    'name': values[1],
+                                    'open': float(values[5]) if values[5] else 0,
+                                    'pre_close': float(values[4]) if values[4] else 0,
+                                    'current': float(values[3]) if values[3] else 0,
+                                    'high': float(values[33]) if values[33] else 0,
+                                    'low': float(values[34]) if values[34] else 0,
+                                    'source': '腾讯财经'
+                                }
+            
+            if detail_data:
+                # 计算涨跌
+                change = detail_data['current'] - detail_data['pre_close']
+                change_percent = (change / detail_data['pre_close'] * 100) if detail_data['pre_close'] != 0 else 0
+                detail_data['change'] = change
+                detail_data['change_percent'] = change_percent
+                
+                # 获取分时图数据
+                detail_data['min_data'] = self.get_minute_data(market, symbol)
+            
+            return detail_data
+            
+        except Exception as e:
+            print(f"获取股票详情失败 {symbol}: {e}")
+            return None
+    
+    def get_minute_data(self, market, symbol):
+        """获取分时图数据"""
+        try:
+            # 获取今天的日期
+            today = datetime.now().strftime('%Y-%m-%d')
+            
+            # 使用新浪财经分钟级K线API（5分钟）
+            url = 'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData'
+            params = {
+                'symbol': f'{market}{symbol}',
+                'scale': '5',
+                'datalen': '320',
+                'ma': 'no'
+            }
+            
+            response = requests.get(url, headers=REQUEST_HEADERS, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                text = response.text
+                # 解析返回的数据
+                try:
+                    # 清理可能的格式问题
+                    if text.startswith('('):
+                        text = text[1:]
+                    if text.endswith(')'):
+                        text = text[:-1]
+                    
+                    import json
+                    kline_data = json.loads(text)
+                    
+                    if kline_data and len(kline_data) > 0:
+                        minute_data = {
+                            'times': [],
+                            'prices': [],
+                            'volumes': [],
+                            'opens': [],
+                            'highs': [],
+                            'lows': []
+                        }
+                        
+                        for kline in kline_data:
+                            # 提取时间
+                            if 'day' in kline:
+                                day_str = kline['day']
+                                if len(day_str) >= 16:
+                                    # 格式化为 HH:MM
+                                    time_part = day_str[11:16]
+                                    hour = int(time_part[:2])
+                                    minute = int(time_part[3:])
+                                    
+                                    # 检查是否是今天的日期
+                                    date_part = day_str[:10]
+                                    
+                                    # 只保留今天9:30到15:00之间的数据
+                                    if date_part == today and (hour > 9 or (hour == 9 and minute >= 30)) and hour < 15:
+                                        minute_data['times'].append(time_part)
+                                        
+                                        # 提取价格（使用close）
+                                        if 'close' in kline and kline['close']:
+                                            minute_data['prices'].append(float(kline['close']))
+                                        elif 'open' in kline and kline['open']:
+                                            minute_data['prices'].append(float(kline['open']))
+                                        else:
+                                            minute_data['prices'].append(0)
+                                        
+                                        # 提取成交量
+                                        if 'volume' in kline and kline['volume']:
+                                            minute_data['volumes'].append(int(kline['volume']))
+                                        else:
+                                            minute_data['volumes'].append(0)
+                                        
+                                        # 提取其他K线数据
+                                        if 'open' in kline and kline['open']:
+                                            minute_data['opens'].append(float(kline['open']))
+                                        if 'high' in kline and kline['high']:
+                                            minute_data['highs'].append(float(kline['high']))
+                                        if 'low' in kline and kline['low']:
+                                            minute_data['lows'].append(float(kline['low']))
+                        
+                        if minute_data['times'] and minute_data['prices']:
+                            return minute_data
+                
+                except Exception as e:
+                    print(f'解析K线数据失败: {e}')
+            
+            # 如果新浪K线失败，尝试原来的分时数据API
+            url = f'https://hq.sinajs.cn/list={market}{symbol}_min'
+            response = requests.get(url, headers=REQUEST_HEADERS, timeout=10)
+            
+            if response.status_code == 200:
+                content = response.content.decode('gbk')
+                if '\"' in content:
+                    data_str = content.split('\"')[1]
+                    if data_str:
+                        values = data_str.split(',')
+                        
+                        if len(values) >= 1:
+                            # 解析分时数据
+                            minute_data = {
+                                'times': [],
+                                'prices': [],
+                                'volumes': []
+                            }
+                            
+                            # 新浪数据格式：价格,均价,成交量,时间
+                            for i in range(0, len(values), 4):
+                                if i + 3 < len(values) and values[i]:
+                                    time_str = values[i + 3]
+                                    if time_str:
+                                        minute_data['times'].append(time_str)
+                                        minute_data['prices'].append(float(values[i]) if values[i] else 0)
+                                        minute_data['volumes'].append(int(values[i + 2]) if values[i + 2] else 0)
+                            
+                            if minute_data['times']:
+                                return minute_data
+            
+            # 如果新浪失败，尝试腾讯财经分时图
+            url = f'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=kline_min&param={market}{symbol},min,86400,1'
+            response = requests.get(url, headers=REQUEST_HEADERS, timeout=10)
+            
+            if response.status_code == 200:
+                text = response.text
+                if '=' in text:
+                    json_str = text.split('=', 1)[1]
+                    try:
+                        import json
+                        data = json.loads(json_str)
+                        if data.get('data') and data['data'].get(market + symbol):
+                            kline_data = data['data'][market + symbol]['min']
+                            if kline_data:
+                                minute_data = {
+                                    'times': [],
+                                    'prices': [],
+                                    'volumes': []
+                                }
+                                for kline in kline_data:
+                                    if len(kline) >= 6:
+                                        time_str = kline[0]
+                                        if time_str:
+                                            # 只取时间部分
+                                            time_short = time_str[-5:] if len(time_str) >= 5 else time_str
+                                            minute_data['times'].append(time_short)
+                                            minute_data['prices'].append(float(kline[1]) if kline[1] else 0)
+                                            minute_data['volumes'].append(int(kline[5]) if kline[5] else 0)
+                                
+                                if minute_data['times']:
+                                    return minute_data
+                    except:
+                        pass
+            
+            # 如果都失败，返回示例数据
+            return {
+                'times': ['09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30', '15:00'],
+                'prices': [],
+                'volumes': []
+            }
+            
+        except Exception as e:
+            print(f"获取分时图数据失败 {symbol}: {e}")
+            # 返回示例数据
+            return {
+                'times': ['09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30', '15:00'],
+                'prices': [],
+                'volumes': []
+            }
     
     def update_all_prices(self):
         """更新所有持仓价格"""
@@ -775,9 +1036,30 @@ def get_stock_price_api(symbol):
         if result:
             return jsonify({
                 'status': 'success',
-                'symbol': result['symbol'],
+                'symbol': result['symbol'] if 'symbol' in result else symbol,
                 'name': result['name'],
                 'price': result['price']
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'error': '未找到股票信息'
+            })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        })
+
+@app.route('/api/stock/detail/<symbol>')
+def get_stock_detail_api(symbol):
+    """查询股票详细信息"""
+    try:
+        result = manager.get_stock_detail(symbol)
+        if result:
+            return jsonify({
+                'status': 'success',
+                'data': result
             })
         else:
             return jsonify({
