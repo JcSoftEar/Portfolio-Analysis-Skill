@@ -844,6 +844,7 @@
         // 全局Chart实例
         let stockChart = null;
         let volumeChart = null;
+        let hoverIndex = -1;
         
         // 显示股票详情
         async function showStockDetail(symbol, name) {
@@ -1001,6 +1002,13 @@
                         mode: 'index',
                         intersect: false
                     },
+                    onHover: (event, elements) => {
+                        if (elements.length > 0) {
+                            hoverIndex = elements[0].index;
+                            stockChart.update('none');
+                            volumeChart.update('none');
+                        }
+                    },
                     plugins: {
                         legend: {
                             display: false
@@ -1060,6 +1068,29 @@
                         ctx.fillText(`开:¥${openPrice.toFixed(2)}`, chartArea.left + 5, y - 5);
                         ctx.restore();
                     }
+                }, {
+                    id: 'verticalLine',
+                    afterDraw: (chart) => {
+                        if (hoverIndex < 0) return;
+                        
+                        const { ctx, chartArea } = chart;
+                        if (!chartArea) return;
+                        
+                        const scale = chart.scales.x;
+                        const x = scale.getPixelForValue(hoverIndex);
+                        
+                        if (x >= chartArea.left && x <= chartArea.right) {
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.moveTo(x, chartArea.top);
+                            ctx.lineTo(x, chartArea.bottom);
+                            ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+                            ctx.lineWidth = 1;
+                            ctx.setLineDash([]);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+                    }
                 }]
             });
             
@@ -1084,6 +1115,13 @@
                     interaction: {
                         mode: 'index',
                         intersect: false
+                    },
+                    onHover: (event, elements) => {
+                        if (elements.length > 0) {
+                            hoverIndex = elements[0].index;
+                            stockChart.update('none');
+                            volumeChart.update('none');
+                        }
                     },
                     plugins: {
                         legend: {
@@ -1125,7 +1163,31 @@
                             }
                         }
                     }
-                }
+                },
+                plugins: [{
+                    id: 'verticalLineVolume',
+                    afterDraw: (chart) => {
+                        if (hoverIndex < 0) return;
+                        
+                        const { ctx, chartArea } = chart;
+                        if (!chartArea) return;
+                        
+                        const scale = chart.scales.x;
+                        const x = scale.getPixelForValue(hoverIndex);
+                        
+                        if (x >= chartArea.left && x <= chartArea.right) {
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.moveTo(x, chartArea.top);
+                            ctx.lineTo(x, chartArea.bottom);
+                            ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+                            ctx.lineWidth = 1;
+                            ctx.setLineDash([]);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+                    }
+                }]
             });
         }
     </script>
