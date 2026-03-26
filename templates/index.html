@@ -341,8 +341,16 @@
                         <div class="col-md-8">
                             <div class="mb-3">
                                 <label class="form-label fw-bold small">今日分时图</label>
-                                <div class="text-center" id="detailChartContainer" style="height: 250px;">
+                                <div class="text-center" id="detailChartContainer" style="height: 200px;">
                                     <div class="spinner-border text-primary" role="status">
+                                        <span class="visually-hidden">加载中...</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-bold small">成交量</label>
+                                <div class="text-center" id="detailVolumeContainer" style="height: 100px;">
+                                    <div class="spinner-border text-secondary" role="status">
                                         <span class="visually-hidden">加载中...</span>
                                     </div>
                                 </div>
@@ -835,6 +843,7 @@
         
         // 全局Chart实例
         let stockChart = null;
+        let volumeChart = null;
         
         // 显示股票详情
         async function showStockDetail(symbol, name) {
@@ -929,19 +938,20 @@
         // 创建分时图
         function createMinChart(detail) {
             const container = document.getElementById('detailChartContainer');
+            const volumeContainer = document.getElementById('detailVolumeContainer');
             
             // 清理旧的Chart
             if (stockChart) {
                 stockChart.destroy();
             }
-            
-            // 创建canvas
-            container.innerHTML = '<canvas id="minChart"></canvas>';
-            const ctx = document.getElementById('minChart').getContext('2d');
+            if (volumeChart) {
+                volumeChart.destroy();
+            }
             
             // 使用真实数据或生成示例数据
             let times = ['09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30', '15:00'];
             let prices = [];
+            let volumes = [];
             const basePrice = detail.pre_close || detail.current;
             const openPrice = detail.open || basePrice;
             
@@ -949,15 +959,25 @@
             if (detail.min_data && detail.min_data.times && detail.min_data.times.length > 0) {
                 times = detail.min_data.times;
                 prices = detail.min_data.prices;
+                volumes = detail.min_data.volumes || [];
             } else {
                 // 如果没有真实数据，生成示例数据
                 for (let i = 0; i < times.length; i++) {
                     const randomChange = (Math.random() - 0.5) * 0.02 * basePrice;
                     prices.push(basePrice + randomChange);
+                    volumes.push(Math.floor(Math.random() * 1000000));
                 }
             }
             
             const chartColor = detail.change >= 0 ? '#e74c3c' : '#2ecc71';
+            const volumeColors = prices.map((price, i) => {
+                if (i === 0) return chartColor;
+                return price >= prices[i-1] ? '#e74c3c' : '#2ecc71';
+            });
+            
+            // 创建价格图表
+            container.innerHTML = '<canvas id="minChart"></canvas>';
+            const ctx = document.getElementById('minChart').getContext('2d');
             
             stockChart = new Chart(ctx, {
                 type: 'line',
@@ -970,16 +990,35 @@
                         backgroundColor: chartColor + '20',
                         fill: true,
                         tension: 0.4,
-                        pointRadius: 2,
+                        pointRadius: 0,
                         pointHoverRadius: 6
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
                     plugins: {
                         legend: {
                             display: false
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.dataset.label || '';
+                                    const value = context.parsed.y;
+                                    const volume = volumes[context.dataIndex] || 0;
+                                    return [
+                                        `价格: ¥${value.toFixed(4)}`,
+                                        `成交量: ${volume.toLocaleString()}`
+                                    ];
+                                }
+                            }
                         }
                     },
                     scales: {
@@ -1022,6 +1061,71 @@
                         ctx.restore();
                     }
                 }]
+            });
+            
+            // 创建成交量图表
+            volumeContainer.innerHTML = '<canvas id="volumeChart"></canvas>';
+            const ctx2 = document.getElementById('volumeChart').getContext('2d');
+            
+            volumeChart = new Chart(ctx2, {
+                type: 'bar',
+                data: {
+                    labels: times,
+                    datasets: [{
+                        label: '成交量',
+                        data: volumes,
+                        backgroundColor: volumeColors,
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: function(context) {
+                                    const volume = context.parsed.y;
+                                    return `成交量: ${volume.toLocaleString()}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                display: false
+                            }
+                        },
+                        y: {
+                            grid: {
+                                color: 'rgba(0,0,0,0.1)'
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    if (value >= 1000000) {
+                                        return (value / 1000000).toFixed(1) + 'M';
+                                    } else if (value >= 1000) {
+                                        return (value / 1000).toFixed(0) + 'K';
+                                    }
+                                    return value;
+                                }
+                            }
+                        }
+                    }
+                }
             });
         }
     </script>
