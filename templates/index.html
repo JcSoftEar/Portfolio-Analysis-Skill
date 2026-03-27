@@ -1166,34 +1166,83 @@
             container.innerHTML = analysisHTML;
         }
 
-        // AI分析股票
+        // AI分析股票 - WebSocket流式版本
         function analyzeStock(symbol) {
             const btn = document.getElementById('analyzeBtn');
             const resultDiv = document.getElementById('llmAnalysisResult');
-
+            
             if (!symbol) {
                 resultDiv.innerHTML = '<div class="text-warning">请选择股票后再进行分析</div>';
                 return;
             }
-
+            
             btn.disabled = true;
-            resultDiv.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">分析中...</span></div>';
-
-            fetch(`/api/stock/analyze/${symbol}`)
-                .then(response => response.json())
-                .then(data => {
-                    btn.disabled = false;
-                    if (data.status === 'success') {
-                        // 直接使用转换后的HTML内容
-                        resultDiv.innerHTML = `<div class="text-left">${data.content}</div>`;
-                    } else {
-                        resultDiv.innerHTML = `<div class="text-danger">分析失败: ${data.error}</div>`;
+            resultDiv.innerHTML = '<div class="text-left">分析中...</div>';
+            
+            // 构建WebSocket URL
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/api/stock/analyze_websocket/${symbol}`;
+            
+            try {
+                // 创建WebSocket连接
+                const ws = new WebSocket(wsUrl);
+                
+                // 处理连接打开事件
+                ws.onopen = function() {
+                    console.log('WebSocket连接已建立');
+                };
+                
+                // 处理消息事件
+                ws.onmessage = function(event) {
+                    try {
+                        // 确保收到的是字符串数据
+                        if (typeof event.data === 'string') {
+                            const data = JSON.parse(event.data);
+                            
+                            if (data.status === 'success') {
+                                // 使用完整转换后的HTML内容，确保Markdown格式正确
+                                resultDiv.innerHTML = `<div class="text-left">${data.content}</div>`;
+                                
+                                // 滚动到底部
+                                resultDiv.scrollTop = resultDiv.scrollHeight;
+                            } else if (data.status === 'done') {
+                                // 分析完成
+                                btn.disabled = false;
+                                // 不要在这里关闭连接，让后端处理关闭
+                                console.log('分析完成');
+                            } else if (data.status === 'error') {
+                                // 处理错误
+                                resultDiv.innerHTML = `<div class="text-danger">分析失败: ${data.error}</div>`;
+                                btn.disabled = false;
+                                // 不要在这里关闭连接，让后端处理关闭
+                            }
+                        }
+                    } catch (error) {
+                        console.error('解析WebSocket数据失败:', error);
                     }
-                })
-                .catch(error => {
+                };
+                
+                // 处理错误事件
+                ws.onerror = function(error) {
+                    console.error('WebSocket错误:', error);
                     btn.disabled = false;
-                    resultDiv.innerHTML = `<div class="text-danger">网络错误: ${error.message}</div>`;
-                });
+                    resultDiv.innerHTML = '<div class="text-danger">分析失败: WebSocket连接错误</div>';
+                    // 避免重复关闭
+                    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                        ws.close();
+                    }
+                };
+                
+                // 处理连接关闭事件
+                ws.onclose = function(event) {
+                    console.log('WebSocket连接已关闭');
+                    btn.disabled = false;
+                };
+            } catch (error) {
+                console.error('创建WebSocket连接失败:', error);
+                btn.disabled = false;
+                resultDiv.innerHTML = '<div class="text-danger">分析失败: 无法创建WebSocket连接</div>';
+            }
         }
 
         // 创建分时图

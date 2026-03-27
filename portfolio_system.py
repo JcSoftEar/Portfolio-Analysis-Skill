@@ -16,6 +16,8 @@ import threading
 import time
 from datetime import datetime
 import webbrowser
+import markdown
+from flask_sock import Sock
 
 # 导入分离的管理器
 from holding_manager import HoldingManager
@@ -23,6 +25,9 @@ from llm_manager import LLMManager
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)
+
+# 初始化WebSocket支持
+sock = Sock(app)
 
 # 初始化管理器
 holding_manager = HoldingManager('portfolio.db')
@@ -313,6 +318,103 @@ def analyze_stock_api(symbol):
             'status': 'error',
             'error': str(e)
         })
+
+@sock.route('/api/stock/analyze_websocket/<symbol>')
+def analyze_stock_websocket(sock, symbol):
+    """WebSocket流式分析股票"""
+    try:
+        # 获取股票详细信息
+        stock_detail = manager.get_stock_detail(symbol)
+        if not stock_detail:
+            sock.send(json.dumps({'status': 'error', 'error': f'获取股票{symbol}信息失败'}))
+            sock.close()
+            return
+        
+        # 构建prompt
+        prompt = f"""请分析以下股票：
+
+股票名称：{stock_detail['name']}
+股票代码：{symbol}
+当前价格：{stock_detail['current']}元
+今日开盘：{stock_detail['open']}元
+今日最高：{stock_detail['high']}元
+今日最低：{stock_detail['low']}元
+昨日收盘：{stock_detail['pre_close']}元
+涨跌额：{stock_detail['change']}元
+涨跌幅：{stock_detail['change_percent']}%
+
+近200个5分钟数据：
+{json.dumps(stock_detail.get('min_data', {}), ensure_ascii=False)}
+
+请基于以上数据，分析股票的走势情况，并给出后续操作建议（持仓、买入、卖出、观望等）。"""
+        
+        # 调用大模型的流式接口
+        response = manager.call_llm(prompt, stream=True)
+        
+        # 检查是否是错误响应
+        if isinstance(response, dict) and response.get('status') == 'error':
+            sock.send(json.dumps(response))
+            sock.close()
+            return
+        
+        # 累积原始内容以便完整转换Markdown
+        accumulated_content = ""
+        
+        # 流式处理响应
+        for chunk in response.iter_content(chunk_size=1024):
+            if chunk:
+                try:
+                    # 解析大模型返回的SSE格式数据
+                    chunk_str = chunk.decode('utf-8')
+                    lines = chunk_str.split('\n')
+                    
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                            
+                        if line.startswith('data: '):
+                            data_str = line[6:]
+                            if data_str == '[DONE]':
+                                break
+                            
+                            try:
+                                data = json.loads(data_str)
+                                # 获取内容片段
+                                if data.get('choices') and data['choices'][0].get('delta'):
+                                    content = data['choices'][0]['delta'].get('content', '')
+                                    if content:
+                                        # 累积内容
+                                        accumulated_content += content
+                                        # 使用完整累积内容重新转换为HTML，确保Markdown格式正确
+                                        html_content = markdown.markdown(accumulated_content)
+                                        # 通过WebSocket发送消息
+                                        sock.send(json.dumps({
+                                            'status': 'success',
+                                            'content': html_content,
+                                            'original': accumulated_content,
+                                            'chunk': content
+                                        }))
+                            except json.JSONDecodeError:
+                                continue
+                except Exception as e:
+                    sock.send(json.dumps({'status': 'error', 'error': f'解析数据失败: {str(e)}'}))
+                    sock.close()
+                    return
+        
+        # 发送完成信号
+        sock.send(json.dumps({'status': 'done'}))
+        # 等待一小段时间，确保前端有足够时间处理消息
+        time.sleep(0.1)
+        sock.close()
+        
+    except Exception as e:
+        # 确保在异常时关闭连接
+        try:
+            sock.send(json.dumps({'status': 'error', 'error': str(e)}))
+        except:
+            pass
+        sock.close()
 
 def start_server(host='0.0.0.0', port=5000, debug=False, auto_update=True):
     """启动Web服务器"""

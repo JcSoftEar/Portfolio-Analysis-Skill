@@ -7,8 +7,26 @@
 import sqlite3
 import requests
 import json
+import logging
+import os
 from datetime import datetime
 import markdown
+
+# 配置日志
+log_dir = 'logs'
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(os.path.join(log_dir, 'llm_manager.log'), encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger('LLMManager')
 
 class LLMManager:
     """大模型管理器 - 处理所有与大模型相关的功能"""
@@ -16,10 +34,12 @@ class LLMManager:
     def __init__(self, db_path='portfolio.db', holding_manager=None):
         self.db_path = db_path
         self.holding_manager = holding_manager
+        logger.info(f'初始化LLMManager，数据库路径：{db_path}')
         self.init_llm_database()
     
     def init_llm_database(self):
         """初始化大模型配置表"""
+        logger.info(f'初始化大模型数据库，路径：{self.db_path}')
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -37,6 +57,7 @@ class LLMManager:
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
+        logger.info('创建大模型配置表完成')
         
         # 插入默认配置（如果不存在）
         cursor.execute('SELECT COUNT(*) FROM llm_config')
@@ -45,12 +66,15 @@ class LLMManager:
             INSERT INTO llm_config (model_type, model_name, api_url, api_key, api_id, enabled)
             VALUES (?, ?, ?, ?, ?, ?)
             ''', ('openai', 'gpt-3.5-turbo', 'https://api.openai.com/v1/chat/completions', '', '', 1))
+            logger.info('插入默认大模型配置完成')
         
         conn.commit()
         conn.close()
+        logger.info('大模型数据库初始化完成')
     
     def get_llm_config(self):
         """获取大模型配置"""
+        logger.info('获取大模型配置')
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -74,13 +98,16 @@ class LLMManager:
                 })
             
             conn.close()
+            logger.info(f'获取到大模型配置 {len(configs)} 条')
             return {'status': 'success', 'data': configs}
             
         except Exception as e:
+            logger.error(f'获取大模型配置失败: {str(e)}')
             return {'status': 'error', 'error': str(e)}
     
     def update_llm_config(self, config_id, model_type, model_name, api_url, api_key, api_id, enabled):
         """更新大模型配置"""
+        logger.info(f'更新大模型配置，ID: {config_id}, 模型类型: {model_type}, 模型名称: {model_name}')
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -99,16 +126,21 @@ class LLMManager:
                 INSERT INTO llm_config (model_type, model_name, api_url, api_key, api_id, enabled)
                 VALUES (?, ?, ?, ?, ?, ?)
                 ''', (model_type, model_name, api_url, api_key, api_id, 1 if enabled else 0))
+                logger.info(f'插入新的大模型配置，模型类型: {model_type}, 模型名称: {model_name}')
+            else:
+                logger.info(f'更新大模型配置成功，ID: {config_id}')
             
             conn.commit()
             conn.close()
             return {'status': 'success', 'message': '大模型配置更新成功'}
             
         except Exception as e:
+            logger.error(f'更新大模型配置失败: {str(e)}')
             return {'status': 'error', 'error': str(e)}
     
-    def call_llm(self, prompt):
+    def call_llm(self, prompt, stream=False):
         """调用大模型"""
+        logger.info('开始调用大模型')
         try:
             # 获取启用的大模型配置
             conn = sqlite3.connect(self.db_path)
@@ -124,12 +156,15 @@ class LLMManager:
             conn.close()
             
             if not config:
+                logger.error('未找到启用的大模型配置')
                 return {'status': 'error', 'error': '未找到启用的大模型配置'}
             
             model_type, model_name, api_url, api_key, api_id = config
+            logger.info(f'使用模型配置: 类型={model_type}, 名称={model_name}, API地址={api_url}')
             
             if model_type == 'openai':
                 # 调用OpenAI API
+                logger.info('调用OpenAI API')
                 headers = {
                     'Content-Type': 'application/json',
                     'Authorization': f'Bearer {api_key}'
@@ -141,29 +176,37 @@ class LLMManager:
                         {'role': 'system', 'content': '你是一位专业的股票分析师，请基于提供的数据进行分析并给出操作建议。中文回答！'},
                         {'role': 'user', 'content': prompt}
                     ],
-                    'temperature': 0.7
+                    'temperature': 0.7,
+                    'stream': stream
                 }
                 
-                response = requests.post(api_url, headers=headers, json=data, timeout=300)
-                print(response)
-                if response.status_code == 200:
-                    result = response.json()
-                    # 将markdown转换为html
-                    markdown_content = result['choices'][0]['message']['content']
-                    html_content = markdown.markdown(markdown_content)
-                    return {
-                        'status': 'success',
-                        'content': html_content,
-                        'original_content': markdown_content
-                    }
+                response = requests.post(api_url, headers=headers, json=data, timeout=300, stream=stream)
+                
+                if stream:
+                    logger.info('OpenAI API 流式响应')
+                    return response
                 else:
-                    return {
-                        'status': 'error',
-                        'error': f'OpenAI API调用失败: {response.text}'
-                    }
+                    if response.status_code == 200:
+                        result = response.json()
+                        # 将markdown转换为html
+                        markdown_content = result['choices'][0]['message']['content']
+                        html_content = markdown.markdown(markdown_content)
+                        logger.info('OpenAI API 调用成功')
+                        return {
+                            'status': 'success',
+                            'content': html_content,
+                            'original_content': markdown_content
+                        }
+                    else:
+                        logger.error(f'OpenAI API调用失败: {response.status_code}, {response.text}')
+                        return {
+                            'status': 'error',
+                            'error': f'OpenAI API调用失败: {response.text}'
+                        }
                     
             elif model_type == 'baichuan':
                 # 调用百炼API
+                logger.info('调用百炼API')
                 headers = {
                     'Content-Type': 'application/json',
                     'Authorization': f'Bearer {api_key}'
@@ -175,29 +218,37 @@ class LLMManager:
                         {'role': 'system', 'content': '你是一位专业的股票分析师，请基于提供的数据进行分析并给出操作建议。'},
                         {'role': 'user', 'content': prompt}
                     ],
-                    'temperature': 0.7
+                    'temperature': 0.7,
+                    'stream': stream
                 }
                 
-                response = requests.post(api_url, headers=headers, json=data, timeout=30)
+                response = requests.post(api_url, headers=headers, json=data, timeout=30, stream=stream)
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    # 将markdown转换为html
-                    markdown_content = result['choices'][0]['message']['content']
-                    html_content = markdown.markdown(markdown_content)
-                    return {
-                        'status': 'success',
-                        'content': html_content,
-                        'original_content': markdown_content
-                    }
+                if stream:
+                    logger.info('百炼API 流式响应')
+                    return response
                 else:
-                    return {
-                        'status': 'error',
-                        'error': f'百炼API调用失败: {response.text}'
-                    }
+                    if response.status_code == 200:
+                        result = response.json()
+                        # 将markdown转换为html
+                        markdown_content = result['choices'][0]['message']['content']
+                        html_content = markdown.markdown(markdown_content)
+                        logger.info('百炼API 调用成功')
+                        return {
+                            'status': 'success',
+                            'content': html_content,
+                            'original_content': markdown_content
+                        }
+                    else:
+                        logger.error(f'百炼API调用失败: {response.status_code}, {response.text}')
+                        return {
+                            'status': 'error',
+                            'error': f'百炼API调用失败: {response.text}'
+                        }
                     
             elif model_type == 'volcano':
                 # 调用火山引擎API
+                logger.info('调用火山引擎API')
                 headers = {
                     'Content-Type': 'application/json',
                     'Authorization': f'Bearer {api_key}',
@@ -210,44 +261,58 @@ class LLMManager:
                         {'role': 'system', 'content': '你是一位专业的股票分析师，请基于提供的数据进行分析并给出操作建议。'},
                         {'role': 'user', 'content': prompt}
                     ],
-                    'temperature': 0.7
+                    'temperature': 0.7,
+                    'stream': stream
                 }
+                logger.info(f'火山引擎API调用请求: {api_url}')
+                response = requests.post(api_url, headers=headers, json=data, timeout=30, stream=stream)
+                logger.info(f'火山引擎API调用响应: {response}')
                 
-                response = requests.post(api_url, headers=headers, json=data, timeout=30)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    # 将markdown转换为html
-                    markdown_content = result['choices'][0]['message']['content']
-                    html_content = markdown.markdown(markdown_content)
-                    return {
-                        'status': 'success',
-                        'content': html_content,
-                        'original_content': markdown_content
-                    }
+                if stream:
+                    logger.info('火山引擎API 流式响应')
+                    return response
                 else:
-                    return {
-                        'status': 'error',
-                        'error': f'火山引擎API调用失败: {response.text}'
-                    }
+                    if response.status_code == 200:
+                        result = response.json()
+                        # 将markdown转换为html
+                        markdown_content = result['choices'][0]['message']['content']
+                        html_content = markdown.markdown(markdown_content)
+                        logger.info('火山引擎API 调用成功')
+                        return {
+                            'status': 'success',
+                            'content': html_content,
+                            'original_content': markdown_content
+                        }
+                    else:
+                        logger.error(f'火山引擎API调用失败: {response.status_code}, {response.text}')
+                        return {
+                            'status': 'error',
+                            'error': f'火山引擎API调用失败: {response.text}'
+                        }
                     
             else:
+                logger.error(f'不支持的模型类型: {model_type}')
                 return {'status': 'error', 'error': f'不支持的模型类型: {model_type}'}
                 
         except Exception as e:
+            logger.error(f'大模型调用异常: {str(e)}')
             return {'status': 'error', 'error': str(e)}
     
     def analyze_stock(self, symbol):
         """分析股票"""
+        logger.info(f'开始分析股票: {symbol}')
         try:
             # 获取股票详细信息（需要调用持仓管理器的方法）
             if not self.holding_manager:
+                logger.error('持仓管理器未初始化')
                 return {'status': 'error', 'error': '持仓管理器未初始化'}
                 
             stock_detail = self.holding_manager.get_stock_detail(symbol)
             if not stock_detail:
+                logger.error(f'获取股票{symbol}信息失败')
                 return {'status': 'error', 'error': f'获取股票{symbol}信息失败'}
             
+            logger.info(f'获取股票{symbol}({stock_detail["name"]})信息成功')
             # 构建prompt
             prompt = f"""请分析以下股票：
 
@@ -267,8 +332,11 @@ class LLMManager:
 请基于以上数据，分析股票的走势情况，并给出后续操作建议（持仓、买入、卖出、观望等）。"""
             
             # 调用大模型
+            logger.info(f'调用大模型分析股票{symbol}')
             result = self.call_llm(prompt)
+            logger.info(f'股票{symbol}分析完成')
             return result
             
         except Exception as e:
+            logger.error(f'股票{symbol}分析异常: {str(e)}')
             return {'status': 'error', 'error': str(e)}
