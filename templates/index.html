@@ -398,7 +398,15 @@
                         </div>
                     </div>
                 </div>
-                <div class="modal-footer py-2">
+                <div class="modal-footer py-2 d-flex justify-content-between">
+                    <div>
+                        <button class="btn btn-sm btn-outline-primary me-2" id="prevStockBtn" title="上一个股票">
+                            <i class="bi bi-chevron-left me-1"></i>上一个
+                        </button>
+                        <button class="btn btn-sm btn-outline-primary" id="nextStockBtn" title="下一个股票">
+                            下一个<i class="bi bi-chevron-right ms-1"></i>
+                        </button>
+                    </div>
                     <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭</button>
                 </div>
             </div>
@@ -477,6 +485,9 @@
         // 更新持仓表格
         function updateHoldingsTable(holdings) {
             const tbody = document.getElementById('holdingsBody');
+            
+            // 更新全局持仓列表
+            holdingsList = holdings.map(h => ({ symbol: h.symbol, name: h.name }));
             
             if (holdings.length === 0) {
                 tbody.innerHTML = `
@@ -846,8 +857,83 @@
         let volumeChart = null;
         let hoverIndex = -1;
         
+        // 导航相关全局变量
+        let holdingsList = [];
+        let currentStockIndex = -1;
+        let currentSymbol = '';
+        let currentName = '';
+        let stockDetailModal = null; // 全局模态框实例
+        
+        // 初始化导航按钮事件
+        document.addEventListener('DOMContentLoaded', function() {
+            const prevBtn = document.getElementById('prevStockBtn');
+            const nextBtn = document.getElementById('nextStockBtn');
+            
+            // 创建模态框实例
+            stockDetailModal = new bootstrap.Modal(document.getElementById('stockDetailModal'));
+            
+            if (prevBtn) {
+                prevBtn.addEventListener('click', showPrevStock);
+            }
+            
+            if (nextBtn) {
+                nextBtn.addEventListener('click', showNextStock);
+            }
+        });
+        
+        // 显示上一个股票
+        function showPrevStock() {
+            if (currentStockIndex > 0) {
+                currentStockIndex--;
+                const stock = holdingsList[currentStockIndex];
+                showStockDetail(stock.symbol, stock.name);
+            } else {
+                alert('已经是第一个股票了');
+            }
+        }
+        
+        // 显示下一个股票
+        function showNextStock() {
+            if (currentStockIndex < holdingsList.length - 1) {
+                currentStockIndex++;
+                const stock = holdingsList[currentStockIndex];
+                showStockDetail(stock.symbol, stock.name);
+            } else {
+                alert('已经是最后一个股票了');
+            }
+        }
+        
+        // 更新导航按钮状态
+        function updateNavButtons() {
+            const prevBtn = document.getElementById('prevStockBtn');
+            const nextBtn = document.getElementById('nextStockBtn');
+            
+            if (prevBtn) {
+                prevBtn.disabled = currentStockIndex <= 0;
+                prevBtn.classList.toggle('disabled', currentStockIndex <= 0);
+            }
+            
+            if (nextBtn) {
+                nextBtn.disabled = currentStockIndex >= holdingsList.length - 1;
+                nextBtn.classList.toggle('disabled', currentStockIndex >= holdingsList.length - 1);
+            }
+        }
+        
         // 显示股票详情
         async function showStockDetail(symbol, name) {
+            // 更新全局变量
+            currentSymbol = symbol;
+            currentName = name;
+            
+            // 如果是从持仓列表打开的，更新索引
+            if (holdingsList.length > 0) {
+                const index = holdingsList.findIndex(s => s.symbol === symbol);
+                if (index !== -1) {
+                    currentStockIndex = index;
+                }
+                updateNavButtons();
+            }
+            
             // 更新模态框标题
             document.getElementById('detailStockName').textContent = name;
             document.getElementById('detailStockSymbol').textContent = symbol;
@@ -863,8 +949,10 @@
             document.getElementById('detailChartContainer').innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">加载中...</span></div>';
             
             // 显示模态框
-            const modal = new bootstrap.Modal(document.getElementById('stockDetailModal'));
-            modal.show();
+            if (!stockDetailModal) {
+                stockDetailModal = new bootstrap.Modal(document.getElementById('stockDetailModal'));
+            }
+            stockDetailModal.show();
             
             try {
                 const response = await fetch(`/api/stock/detail/${symbol}`);
