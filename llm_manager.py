@@ -8,6 +8,7 @@ import sqlite3
 import requests
 import json
 from datetime import datetime
+import markdown
 
 class LLMManager:
     """大模型管理器 - 处理所有与大模型相关的功能"""
@@ -147,9 +148,13 @@ class LLMManager:
                 print(response)
                 if response.status_code == 200:
                     result = response.json()
+                    # 将markdown转换为html
+                    markdown_content = result['choices'][0]['message']['content']
+                    html_content = markdown.markdown(markdown_content)
                     return {
                         'status': 'success',
-                        'content': result['choices'][0]['message']['content']
+                        'content': html_content,
+                        'original_content': markdown_content
                     }
                 else:
                     return {
@@ -177,9 +182,13 @@ class LLMManager:
                 
                 if response.status_code == 200:
                     result = response.json()
+                    # 将markdown转换为html
+                    markdown_content = result['choices'][0]['message']['content']
+                    html_content = markdown.markdown(markdown_content)
                     return {
                         'status': 'success',
-                        'content': result['choices'][0]['message']['content']
+                        'content': html_content,
+                        'original_content': markdown_content
                     }
                 else:
                     return {
@@ -208,9 +217,13 @@ class LLMManager:
                 
                 if response.status_code == 200:
                     result = response.json()
+                    # 将markdown转换为html
+                    markdown_content = result['choices'][0]['message']['content']
+                    html_content = markdown.markdown(markdown_content)
                     return {
                         'status': 'success',
-                        'content': result['choices'][0]['message']['content']
+                        'content': html_content,
+                        'original_content': markdown_content
                     }
                 else:
                     return {

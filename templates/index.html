@@ -410,7 +410,7 @@
                             <div class="card bg-light mt-3">
                                 <div class="card-body p-3">
                                     <h6 class="card-title mb-3 fw-bold"><i class="bi bi-robot me-1"></i>AI分析建议</h6>
-                                    <div id="llmAnalysisResult">
+                                    <div id="llmAnalysisResult" style="max-height: 300px; overflow-y: auto; padding-right: 10px;">
                                         <small class="text-muted">点击"AI分析"按钮获取分析结果</small>
                                     </div>
                                 </div>
@@ -1177,9 +1177,8 @@
                 .then(data => {
                     btn.disabled = false;
                     if (data.status === 'success') {
-                        // 格式化分析结果，将换行符转换为<br>
-                        const formattedContent = data.content.replace(/\n/g, '<br>');
-                        resultDiv.innerHTML = `<div class="text-left">${formattedContent}</div>`;
+                        // 直接使用转换后的HTML内容
+                        resultDiv.innerHTML = `<div class="text-left">${data.content}</div>`;
                     } else {
                         resultDiv.innerHTML = `<div class="text-danger">分析失败: ${data.error}</div>`;
                     }
