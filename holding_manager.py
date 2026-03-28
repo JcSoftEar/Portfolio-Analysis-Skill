@@ -241,56 +241,80 @@ class HoldingManager:
                     kline_data = json.loads(text)
                     
                     if kline_data and len(kline_data) > 0:
-                        minute_data = {
-                            'times': [],
-                            'prices': [],
-                            'volumes': [],
-                            'opens': [],
-                            'highs': [],
-                            'lows': []
-                        }
-                        
+                        # 先按日期分组收集所有数据
+                        data_by_date = {}
                         for kline in kline_data:
-                            # 提取时间
                             if 'day' in kline:
                                 day_str = kline['day']
                                 if len(day_str) >= 16:
-                                    # 格式化为 HH:MM
+                                    date_part = day_str[:10]
                                     time_part = day_str[11:16]
                                     hour = int(time_part[:2])
                                     minute = int(time_part[3:])
                                     
-                                    # 检查是否是今天的日期
-                                    date_part = day_str[:10]
-                                    
-                                    # 只保留今天9:30到15:00之间的数据
-                                    if date_part == today and (hour > 9 or (hour == 9 and minute >= 30)) and hour < 15:
-                                        minute_data['times'].append(time_part)
-                                        
-                                        # 提取价格（使用close）
-                                        if 'close' in kline and kline['close']:
-                                            minute_data['prices'].append(float(kline['close']))
-                                        elif 'open' in kline and kline['open']:
-                                            minute_data['prices'].append(float(kline['open']))
-                                        else:
-                                            minute_data['prices'].append(0)
-                                        
-                                        # 提取成交量
-                                        if 'volume' in kline and kline['volume']:
-                                            minute_data['volumes'].append(int(kline['volume']))
-                                        else:
-                                            minute_data['volumes'].append(0)
-                                        
-                                        # 提取其他K线数据
-                                        if 'open' in kline and kline['open']:
-                                            minute_data['opens'].append(float(kline['open']))
-                                        if 'high' in kline and kline['high']:
-                                            minute_data['highs'].append(float(kline['high']))
-                                        if 'low' in kline and kline['low']:
-                                            minute_data['lows'].append(float(kline['low']))
+                                    # 只保留交易时间的数据（9:30-15:00）
+                                    if (hour > 9 or (hour == 9 and minute >= 30)) and hour < 15:
+                                        if date_part not in data_by_date:
+                                            data_by_date[date_part] = []
+                                        data_by_date[date_part].append({
+                                            'time': time_part,
+                                            'kline': kline
+                                        })
                         
-                        if minute_data['times'] and minute_data['prices']:
-                            return minute_data
+                        # 查找目标日期（今天或最近的有数据日期）
+                        target_date = None
+                        if today in data_by_date and data_by_date[today]:
+                            target_date = today
+                        else:
+                            # 如果没有今天的数据，找到最近的有数据的日期
+                            available_dates = sorted(data_by_date.keys(), reverse=True)
+                            if available_dates:
+                                target_date = available_dates[0]
+                                print(f'今天({today})无数据，使用最近有数据的日期: {target_date}')
+                        
+                        # 如果找到了目标日期且有数据，提取分时数据
+                        if target_date and target_date in data_by_date and data_by_date[target_date]:
+                            # 提取目标日期的分时数据
+                            minute_data = {
+                                'times': [],
+                                'prices': [],
+                                'volumes': [],
+                                'opens': [],
+                                'highs': [],
+                                'lows': []
+                            }
+                            
+                            # 按时间排序数据
+                            for item in sorted(data_by_date[target_date], key=lambda x: x['time']):
+                                kline = item['kline']
+                                time_part = item['time']
+                                
+                                minute_data['times'].append(time_part)
+                                
+                                # 提取价格（使用close）
+                                if 'close' in kline and kline['close']:
+                                    minute_data['prices'].append(float(kline['close']))
+                                elif 'open' in kline and kline['open']:
+                                    minute_data['prices'].append(float(kline['open']))
+                                else:
+                                    minute_data['prices'].append(0)
+                                
+                                # 提取成交量
+                                if 'volume' in kline and kline['volume']:
+                                    minute_data['volumes'].append(int(kline['volume']))
+                                else:
+                                    minute_data['volumes'].append(0)
+                                
+                                # 提取其他K线数据
+                                if 'open' in kline and kline['open']:
+                                    minute_data['opens'].append(float(kline['open']))
+                                if 'high' in kline and kline['high']:
+                                    minute_data['highs'].append(float(kline['high']))
+                                if 'low' in kline and kline['low']:
+                                    minute_data['lows'].append(float(kline['low']))
+                            
+                            if minute_data['times'] and minute_data['prices']:
+                                return minute_data
                 
                 except Exception as e:
                     print(f'解析K线数据失败: {e}')
@@ -340,24 +364,56 @@ class HoldingManager:
                         if data.get('data') and data['data'].get(market + symbol):
                             kline_data = data['data'][market + symbol]['min']
                             if kline_data:
-                                minute_data = {
-                                    'times': [],
-                                    'prices': [],
-                                    'volumes': []
-                                }
+                                # 先按日期分组收集所有数据
+                                data_by_date = {}
                                 for kline in kline_data:
                                     if len(kline) >= 6:
                                         time_str = kline[0]
-                                        if time_str:
-                                            # 只取时间部分
-                                            time_short = time_str[-5:] if len(time_str) >= 5 else time_str
-                                            minute_data['times'].append(time_short)
-                                            minute_data['prices'].append(float(kline[1]) if kline[1] else 0)
-                                            minute_data['volumes'].append(int(kline[5]) if kline[5] else 0)
+                                        if time_str and len(time_str) >= 16:
+                                            date_part = time_str[:10]
+                                            time_part = time_str[11:16]
+                                            
+                                            if date_part not in data_by_date:
+                                                data_by_date[date_part] = []
+                                            data_by_date[date_part].append({
+                                                'time': time_part,
+                                                'kline': kline
+                                            })
                                 
-                                if minute_data['times']:
-                                    return minute_data
-                    except:
+                                # 检查是否有今天的数据
+                                target_date = today
+                                if today not in data_by_date or not data_by_date[today]:
+                                    # 如果没有今天的数据，找到最近的有数据的日期
+                                    available_dates = sorted(data_by_date.keys(), reverse=True)
+                                    if available_dates:
+                                        target_date = available_dates[0]
+                                        print(f'今天({today})无数据，使用最近有数据的日期: {target_date}')
+                                    else:
+                                        # 如果没有任何数据，继续尝试其他API
+                                        target_date = None
+                                
+                                # 确保目标日期存在数据
+                                if target_date in data_by_date and data_by_date[target_date]:
+                                    # 提取目标日期的分时数据
+                                    minute_data = {
+                                        'times': [],
+                                        'prices': [],
+                                        'volumes': []
+                                    }
+                                    
+                                    # 按时间排序数据
+                                    for item in sorted(data_by_date[target_date], key=lambda x: x['time']):
+                                        kline = item['kline']
+                                        time_part = item['time']
+                                        
+                                        minute_data['times'].append(time_part)
+                                        minute_data['prices'].append(float(kline[1]) if kline[1] else 0)
+                                        minute_data['volumes'].append(int(kline[5]) if kline[5] else 0)
+                                    
+                                    if minute_data['times']:
+                                        return minute_data
+                    except Exception as e:
+                        print(f'解析腾讯分时数据失败: {e}')
                         pass
             
             # 如果都失败，返回示例数据

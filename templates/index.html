@@ -1187,6 +1187,9 @@
                 // 创建WebSocket连接
                 const ws = new WebSocket(wsUrl);
                 
+                // 添加一个标志，用于标记连接是否已经正常完成
+                let isConnectionCompleted = false;
+                
                 // 处理连接打开事件
                 ws.onopen = function() {
                     console.log('WebSocket连接已建立');
@@ -1206,13 +1209,18 @@
                                 // 滚动到底部
                                 resultDiv.scrollTop = resultDiv.scrollHeight;
                             } else if (data.status === 'done') {
-                                // 分析完成
+                                // 分析完成，标记连接已正常完成
+                                isConnectionCompleted = true;
                                 btn.disabled = false;
-                                // 不要在这里关闭连接，让后端处理关闭
                                 console.log('分析完成');
+                                // 收到完成信号后，前端主动关闭连接
+                                if (ws.readyState === WebSocket.OPEN) {
+                                    ws.close(1000, '分析完成，正常关闭连接');
+                                }
                             } else if (data.status === 'error') {
+                                console.error('分析失败:', data.error);
                                 // 处理错误
-                                resultDiv.innerHTML = `<div class="text-danger">分析失败: ${data.error}</div>`;
+                                // resultDiv.innerHTML += `<div class="text-danger">分析失败: ${data.error}</div>`;
                                 btn.disabled = false;
                                 // 不要在这里关闭连接，让后端处理关闭
                             }
@@ -1226,7 +1234,10 @@
                 ws.onerror = function(error) {
                     console.error('WebSocket错误:', error);
                     btn.disabled = false;
-                    resultDiv.innerHTML = '<div class="text-danger">分析失败: WebSocket连接错误</div>';
+                    // 只有在连接未正常完成时才显示错误信息
+                    if (!isConnectionCompleted) {
+                        // resultDiv.innerHTML += '<div class="text-danger">分析失败: WebSocket连接错误</div>';
+                    }
                     // 避免重复关闭
                     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
                         ws.close();
@@ -1237,6 +1248,11 @@
                 ws.onclose = function(event) {
                     console.log('WebSocket连接已关闭');
                     btn.disabled = false;
+                    // 如果连接已正常完成，不做任何处理
+                    // 否则，如果关闭事件的code不是正常关闭码，则显示错误信息
+                    if (!isConnectionCompleted && event.code !== 1000 && event.code !== 1001) {
+                        resultDiv.innerHTML = '<div class="text-danger">分析失败: WebSocket连接意外关闭</div>';
+                    }
                 };
             } catch (error) {
                 console.error('创建WebSocket连接失败:', error);

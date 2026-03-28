@@ -18,10 +18,26 @@ from datetime import datetime
 import webbrowser
 import markdown
 from flask_sock import Sock
+import logging
 
 # 导入分离的管理器
 from holding_manager import HoldingManager
 from llm_manager import LLMManager
+
+log_dir = 'logs'
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(os.path.join(log_dir, 'llm_manager.log'), encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger('Manager')
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)
@@ -388,6 +404,7 @@ def analyze_stock_websocket(sock, symbol):
                                         accumulated_content += content
                                         # 使用完整累积内容重新转换为HTML，确保Markdown格式正确
                                         html_content = markdown.markdown(accumulated_content)
+                                        logger.info(f'转换后的HTML内容: {html_content}')
                                         # 通过WebSocket发送消息
                                         sock.send(json.dumps({
                                             'status': 'success',
@@ -398,15 +415,14 @@ def analyze_stock_websocket(sock, symbol):
                             except json.JSONDecodeError:
                                 continue
                 except Exception as e:
+                    logger.error(f'解析数据失败: {str(e)}')
                     sock.send(json.dumps({'status': 'error', 'error': f'解析数据失败: {str(e)}'}))
                     sock.close()
                     return
         
         # 发送完成信号
         sock.send(json.dumps({'status': 'done'}))
-        # 等待一小段时间，确保前端有足够时间处理消息
-        time.sleep(0.1)
-        sock.close()
+        # 不再等待，由前端控制连接关闭
         
     except Exception as e:
         # 确保在异常时关闭连接
