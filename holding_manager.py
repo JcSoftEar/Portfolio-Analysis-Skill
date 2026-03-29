@@ -483,6 +483,46 @@ class HoldingManager:
                 'error': str(e)
             }
     
+    def get_single_holding(self, symbol):
+        """获取单只股票的持仓信息"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 获取单只股票的持仓数据
+            cursor.execute('''
+            SELECT 
+                symbol,
+                name,
+                quantity,
+                cost_price,
+                current_price,
+                ROUND((current_price - cost_price) * quantity, 4) as pnl,
+                ROUND((current_price - cost_price) / cost_price * 100, 4) as pnl_percent
+            FROM holdings
+            WHERE symbol = ?
+            ''', (symbol,))
+            
+            holding = cursor.fetchone()
+            conn.close()
+            
+            if holding:
+                symbol, name, quantity, cost_price, current_price, pnl, pnl_percent = holding
+                return {
+                    'symbol': symbol,
+                    'name': name,
+                    'quantity': quantity,
+                    'cost_price': round(cost_price, 4),
+                    'current_price': round(current_price, 4),
+                    'pnl': round(pnl, 4),
+                    'pnl_percent': round(pnl_percent, 4)
+                }
+            return None
+            
+        except Exception as e:
+            print(f"获取单只股票持仓数据失败: {e}")
+            return None
+    
     def get_portfolio_data(self):
         """获取完整的持仓数据"""
         try:

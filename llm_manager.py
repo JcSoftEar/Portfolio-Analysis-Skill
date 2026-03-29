@@ -313,6 +313,18 @@ class LLMManager:
                 return {'status': 'error', 'error': f'获取股票{symbol}信息失败'}
             
             logger.info(f'获取股票{symbol}({stock_detail["name"]})信息成功')
+            
+            # 获取持仓信息
+            holding_info = self.holding_manager.get_single_holding(symbol)
+            holding_text = ""
+            if holding_info:
+                holding_text = f"""\n我的持仓情况：
+持仓数量：{holding_info['quantity']}股
+成本价：{holding_info['cost_price']}元
+当前盈亏：{holding_info['pnl']}元 ({holding_info['pnl_percent']}%)"""
+            else:
+                holding_text = "\n（注：我目前没有持有该股）"
+            
             # 构建prompt
             prompt = f"""请分析以下股票：
 
@@ -325,11 +337,12 @@ class LLMManager:
 昨日收盘：{stock_detail['pre_close']}元
 涨跌额：{stock_detail['change']}元
 涨跌幅：{stock_detail['change_percent']}%
+{holding_text}
 
 近200个5分钟数据：
 {json.dumps(stock_detail.get('min_data', {}), ensure_ascii=False)}
 
-请基于以上数据，分析股票的走势情况，并给出后续操作建议（持仓、买入、卖出、观望等）。"""
+请基于以上数据，分析股票的走势情况，并结合我的持仓情况给出后续操作建议（持仓、买入、卖出、观望等）。"""
             
             # 调用大模型
             logger.info(f'调用大模型分析股票{symbol}')
