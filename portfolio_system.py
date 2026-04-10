@@ -394,6 +394,7 @@ def analyze_stock_websocket(sock, symbol):
                 try:
                     # 解析大模型返回的SSE格式数据
                     chunk_str = chunk.decode('utf-8')
+                    logger.info(f'接收到流式响应块: {chunk_str}')
                     lines = chunk_str.split('\n')
                     
                     for line in lines:
@@ -403,20 +404,35 @@ def analyze_stock_websocket(sock, symbol):
                             
                         if line.startswith('data: '):
                             data_str = line[6:]
+                            logger.info(f'解析到数据行: {data_str}')
                             if data_str == '[DONE]':
+                                logger.info('接收到流结束信号')
                                 break
                             
                             try:
+                                # 检查数据是否为空
+                                if not data_str.strip():
+                                    logger.warning('接收到空数据')
+                                    continue
+                                    
                                 data = json.loads(data_str)
+                                logger.info(f'解析JSON数据: {json.dumps(data, ensure_ascii=False)}')
                                 # 获取内容片段
-                                if data.get('choices') and data['choices'][0].get('delta'):
-                                    content = data['choices'][0]['delta'].get('content', '')
+                                if data.get('choices') and len(data['choices']) > 0:
+                                    if data['choices'][0].get('delta'):
+                                        content = data['choices'][0]['delta'].get('content', '')
+                                    elif data['choices'][0].get('message'):
+                                        # 处理非流式格式的响应
+                                        content = data['choices'][0]['message'].get('content', '')
+                                    else:
+                                        content = ''
+                                        logger.warning(f'未知的响应格式: {json.dumps(data, ensure_ascii=False)}')
+                                    
                                     if content:
                                         # 累积内容
                                         accumulated_content += content
                                         # 使用完整累积内容重新转换为HTML，确保Markdown格式正确
                                         html_content = markdown.markdown(accumulated_content)
-                                        # logger.info(f'转换后的HTML内容: {html_content}')
                                         # 通过WebSocket发送消息
                                         sock.send(json.dumps({
                                             'status': 'success',
@@ -424,10 +440,16 @@ def analyze_stock_websocket(sock, symbol):
                                             'original': accumulated_content,
                                             'chunk': content
                                         }))
-                            except json.JSONDecodeError:
+                            except json.JSONDecodeError as e:
+                                logger.error(f'JSON解析失败: {str(e)}, 数据: {data_str}')
+                                # 发送详细的错误信息给前端
+                                sock.send(json.dumps({
+                                    'status': 'error', 
+                                    'error': f'JSON解析失败: {str(e)}, 数据: {data_str}'
+                                }))
                                 continue
                 except Exception as e:
-                    logger.error(f'解析数据失败: {str(e)}')
+                    logger.error(f'流式响应处理异常: {str(e)}')
                     sock.send(json.dumps({'status': 'error', 'error': f'解析数据失败: {str(e)}'}))
                     sock.close()
                     return

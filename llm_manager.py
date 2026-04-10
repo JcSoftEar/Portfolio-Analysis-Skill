@@ -62,10 +62,18 @@ class LLMManager:
         # 插入默认配置（如果不存在）
         cursor.execute('SELECT COUNT(*) FROM llm_config')
         if cursor.fetchone()[0] == 0:
+            # 插入OpenAI默认配置
             cursor.execute('''
             INSERT INTO llm_config (model_type, model_name, api_url, api_key, api_id, enabled)
             VALUES (?, ?, ?, ?, ?, ?)
             ''', ('openai', 'gpt-3.5-turbo', 'https://api.openai.com/v1/chat/completions', '', '', 1))
+            
+            # 插入MiniMax默认配置
+            cursor.execute('''
+            INSERT INTO llm_config (model_type, model_name, api_url, api_key, api_id, enabled)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''', ('minimax', 'M2.7', 'https://api.minimaxi.com/v1/chat/completions', '', '', 0))
+            
             logger.info('插入默认大模型配置完成')
         
         conn.commit()
@@ -288,6 +296,79 @@ class LLMManager:
                         return {
                             'status': 'error',
                             'error': f'火山引擎API调用失败: {response.text}'
+                        }
+                    
+            elif model_type == 'minimax':
+                # 调用MiniMax API
+                logger.info('调用MiniMax API')
+                headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {api_key}'
+                }
+                
+                # 添加tokenplan支持，根据MiniMax API文档，格式与OpenAI类似
+                data = {
+                    'model': model_name,
+                    'messages': [
+                        {'role': 'system', 'content': '你是一位专业的股票分析师，请基于提供的数据进行分析并给出操作建议。中文回答！'},
+                        {'role': 'user', 'content': prompt}
+                    ],
+                    'temperature': 0.7,
+                    'stream': stream
+                }
+                
+                # 如果api_id存在，可能用于tokenplan相关配置
+                if api_id:
+                    data['tokenplan'] = api_id
+                
+                logger.info(f'MiniMax API调用请求: {api_url}, stream:{stream}')
+                logger.info(f'MiniMax API请求头: {headers}')
+                logger.info(f'MiniMax API请求数据: {json.dumps(data, ensure_ascii=False)}')
+                
+                response = requests.post(api_url, headers=headers, json=data, timeout=300, stream=stream)
+                logger.info(f'MiniMax API调用响应状态: {response.status_code}')
+                logger.info(f'MiniMax API调用响应头: {dict(response.headers)}')
+                
+                # 对于流式响应，不尝试解析JSON
+                if stream:
+                    logger.info('MiniMax API 流式响应')
+                    return response
+                else:
+                    # 非流式响应，尝试解析JSON
+                    logger.info(f'MiniMax API调用响应内容: {response.text}')
+                    
+                    if response.status_code == 200:
+                        try:
+                            result = response.json()
+                            logger.info(f'MiniMax API响应JSON: {json.dumps(result, ensure_ascii=False)}')
+                            
+                            # 将markdown转换为html
+                            if result.get('choices') and len(result['choices']) > 0 and result['choices'][0].get('message'):
+                                markdown_content = result['choices'][0]['message']['content']
+                                html_content = markdown.markdown(markdown_content)
+                                logger.info('MiniMax API 调用成功')
+                                return {
+                                    'status': 'success',
+                                    'content': html_content,
+                                    'original_content': markdown_content
+                                }
+                            else:
+                                logger.error(f'MiniMax API响应格式不正确: {json.dumps(result, ensure_ascii=False)}')
+                                return {
+                                    'status': 'error',
+                                    'error': f'MiniMax API响应格式不正确: 缺少必要字段'
+                                }
+                        except json.JSONDecodeError as e:
+                            logger.error(f'MiniMax API响应JSON解析失败: {str(e)}, 响应内容: {response.text}')
+                            return {
+                                'status': 'error',
+                                'error': f'MiniMax API响应JSON解析失败: {str(e)}'
+                            }
+                    else:
+                        logger.error(f'MiniMax API调用失败: {response.status_code}, {response.text}')
+                        return {
+                            'status': 'error',
+                            'error': f'MiniMax API调用失败: {response.status_code}, {response.text}'
                         }
                     
             else:
